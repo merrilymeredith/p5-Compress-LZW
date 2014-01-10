@@ -1,157 +1,187 @@
-############################################################
 package Compress::LZW;
-require Exporter;
 
-use Carp;
-use vars qw/@ISA @EXPORT $VERSION/;
 use warnings;
 use strict;
 
-@EXPORT = qw/compress decompress/;;
-@ISA = qw/Exporter/;
-$VERSION = 0.01;
+use base 'Exporter';
+our @EXPORT = qw/compress decompress/;;
 
-my (%LZ, %UNLZ, %SA);
-%LZ = (12 => sub {
-                 my $v = '';
-                 for my $i (0..$#_) {
-                     vec($v, 3*$i, 4) = $_[$i]/256;
-                     vec($v, 3*$i+1, 4) = ($_[$i]/16)%16;
-                     vec($v, 3*$i+2, 4) = $_[$i]%16;
-                 }
-                 $v;
-             },
-       16 => sub { pack 'S*', @_ });
-%UNLZ = (12 => sub {
-                   my $code = shift;
-                   my @code;
-                   my $len = length($code);
-                   my $reallen = 2*$len/3;
-                   foreach (0..$reallen - 1) {
-                       push @code, (vec($code, 3*$_, 4)<<8)
-                       | (vec($code, 3*$_+1, 4)<<4)
-                       | (vec($code, 3*$_+2, 4));
-                   }
-                   @code;
-               },
-         16 => sub { unpack 'S*', shift; });
+our $MAGIC      = "\037\235";
+our $BIT_MASK   = 0x1f;
+our $BLOCK_MASK = 0X80;
 
 sub compress {
-    my ($str, $bits) = @_;
-    $bits = $bits ? $bits : 16;
-    my $p = ''; 
-    my %d = map{(chr $_, $_)} 0..255;
-    my @o = ();
-    my $ncw = 256;
-    
-    for (split '', $str) {
-        if (exists $d{$p.$_}) {
-            $p .= $_;
-        } else {
-            push @o, $d{$p};
-            $d{$p.$_} = $ncw++;
-            $p = $_;
-        }
-    }
-    push @o, $d{$p};
-    
-    if ($bits != 16 && $ncw < 1<<12) {
-        $bits = 12;
-        return $LZ{12}->(@o);
-    } elsif ($ncw < 1<<16) {
-        $bits = 16;
-        return $LZ{16}->(@o);
-    } else {
-        croak "Sorry, code-word overflow";
-    }
+  my ( $str ) = @_;
+  
+  return Compress::LZW::Compressor->new()->compress( $str );
 }
 
 sub decompress {
-    my ($str, $bits) = @_;
-    $bits = $bits ? $bits : 16;
-    
-    my %d = (map{($_, chr $_)} 0..255);
-    my $ncw = 256;
-    my $ret = '';
-    
-    my ($p, @code) = $UNLZ{$bits}->($str);
-    
-    $ret .= $d{$p};
-    for (@code) {
-        if (exists $d{$_}) {
-            $ret .= $d{$_};
-            $d{$ncw++} = $d{$p}.substr($d{$_}, 0, 1);
-        } else {
-            my $dp = $d{$p};
-            unless ($_ == $ncw++) { carp "($_ == $ncw)?! Check your table size!" };
-            $ret .= ($d{$_} = $dp.substr($dp, 0, 1));
-        }
-        $p = $_;
-    }
-    $ret;
-}
-
+  my ( $str ) = @_;
+  
+  return Compress::LZW::Compressor->new()->compress( $str );
+}  
 
 ############################################################
 
 
-package Compress::LZW::WriterQueue;
+package Compress::LZW::Compressor;
 
-sub new {
-	my $class = shift;
-	my $self  = {
-		queue	=> [],
-		bits	=> 8,
-		maxbits	=> 16,
- 	};
-		
-	bless $self, $class;
-	return $self;
+use Moo;
+use namespace::clean;
+
+has max_code_size => (
+  is      => 'ro',
+  default => 16,
+);
+
+has _code_size => (
+  is      => 'rwp',
+  clearer => 1,
+  default => 9,
+);
+
+has _buf => (
+  is      => 'lazy',
+  builder => 1,
+);
+
+has _buf_size => (
+  is      => 'rw',
+);
+
+has _code_table => (
+  is      => 'lazy',
+  clearer => 1,
+);
+
+has _next_code => (
+  is      => 'rw',
+  clearer => 1,
+  default => 257,
+);
+
+sub _build__buf {
+  my $self = shift;
+  
+  my $buf = $Compress::LZW::MAGIC
+    . chr( $self->max_code_size | $Compress::LZW::BLOCK_MASK );
+     
+  $self->_buf_size( length($buf) * 8 );
+  return \$buf;
 }
 
-sub queue_length {
-	my $self = shift;
-	
-	return scalar @{ $self->{queue} };
+
+sub _build__code_table {
+  my $self = shift;
+  
+  return {
+    map { chr($_) => $_ } 0 .. 255
+  };
 }
 
-sub push {
-	my $self = shift;
-	my $code = shift;
-	
-	push @{ $self->{queue} }, $code;
-	
-	return $self->flush_queue();
+sub _reset__code_table {
+  my $self = shift;
+  
+  $self->_clear__code_table;
+  $self->_clear__next_code;
+  $self->_clear__code_size;
+  $self->_buf_write( 256 );
 }
 
-sub flush_queue {
-	my $self = shift;
-	
-	my $out;
-	
-	if ( $self->queue_length > 8 ) ){
-		
-		my $buf;
-		for ( 1 .. 8 ){
-			if ( length $buf >= 8 ){
-				my $end = length($buf) * 8;
-				
-				vec( $buf, $end, 8 ) = pack('b8', substr($buf,0,8,''));
-			}
-			
-			my $code = shift @{ $self->{queue} };
-			
-			if ( $code > ( 2 ** $self->{bits} ) ){
-				$self->{bits++};
-			}
-			
-			$buf .= sprintf('%b', $code);
-		}
-		
-	}
-	
-	return '';
+sub _inc__next_code {
+  my $self = shift;
+  $self->_next_code( $self->_next_code + 1 );
 }
+
+sub _add_code {
+  my $self = shift;
+  my ( $code ) = @_;
+
+  my $max_code = 2 ** $self->_code_size;
+  if ( $code > $max_code ){
+    
+    if ( $self->_code_size < $self->max_code_size ){
+      $self->_set_code_size($self->_code_size + 1 );
+    }
+    else {
+      # FINISHME
+      # if compress(1) compatible we need to do a code table reset
+      # ... when the ratio falls after reaching this point.
+      # this doesn't need to be perfect, the only part that needs
+      # match algorithm-wise is what code tables are built the same
+      # after a reset.
+      warn "Resetting code table at $code";
+      $self->_reset__code_table;
+    }
+  }
+  
+  $self->_buf_write( $code );
+}
+
+sub _finish {
+  my $self = shift;
+
+  return ${ $self->_buf };
+}
+
+sub _buf_write {
+  my $self = shift;
+  my ( $code ) = @_;
+
+  return unless defined $code;
+  
+  my $code_size = $self->_code_size;
+  my $buf       = $self->_buf;
+  my $buf_size  = $self->_buf_size;
+
+  if ( $code > ( 2 ** $code_size ) ){
+    die "Code value too high for current code size $code_size";
+  }
+  my $wpos = $buf_size;# + $code_size - 1;
+  
+  #~ warn "write 0x" . hex( $code ) . "\tat $code_size bits\toffset $wpos (byte ".int($wpos/8) . ')';
+  
+  if ( $code == 1 ){
+    vec( $$buf, $wpos, 1 ) = 1;
+  }
+  else {
+    for my $bit ( 0 .. $code_size-1 ){
+      vec( $$buf, $wpos + $bit, 1 ) = 1 if ( ($code >> $bit) & 1 );
+    }
+  }
+  
+  $self->_buf_size( $buf_size + $code_size );
+}
+
+
+sub compress {
+  my $self = shift;
+  my ( $str ) = @_;
+  
+  my $codes = $self->_code_table;
+
+  my $seen = '';
+  for ( 0 .. length($str) ){
+    my $char = substr($str, $_, 1);
+    
+    if ( exists $codes->{ $seen . $char } ){
+      $seen .= $char;
+    }
+    else {
+      $self->_add_code( $codes->{ $seen } );
+      
+      $codes->{ $seen . $char } = $self->_next_code;
+      $self->_inc__next_code;
+      
+      $seen = $char;
+    }
+  }
+  $self->_add_code( $codes->{ $seen } );  #last bit of input
+  
+  return $self->_finish;
+}
+
 
 
 1;

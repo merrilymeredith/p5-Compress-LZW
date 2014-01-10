@@ -30,15 +30,21 @@ package Compress::LZW::Compressor;
 use Moo;
 use namespace::clean;
 
-has max_code_size => (
+has max_code_size => ( # max bits
   is      => 'ro',
   default => 16,
 );
 
-has _code_size => (
-  is      => 'rwp',
-  clearer => 1,
+has init_code_size => (
+  is      => 'ro',
   default => 9,
+);
+
+has _code_size => ( # current bits
+  is       => 'rw',
+  clearer  => 1,
+  lazy     => 1,
+  builder  => 1,
 );
 
 has _buf => (
@@ -46,7 +52,7 @@ has _buf => (
   builder => 1,
 );
 
-has _buf_size => (
+has _buf_size => ( #track our endpoint in bits
   is      => 'rw',
 );
 
@@ -61,6 +67,7 @@ has _next_code => (
   default => 257,
 );
 
+
 sub _build__buf {
   my $self = shift;
   
@@ -73,12 +80,15 @@ sub _build__buf {
 
 
 sub _build__code_table {
-  my $self = shift;
-  
   return {
     map { chr($_) => $_ } 0 .. 255
   };
 }
+
+sub _build__code_size {
+  return $_[0]->init_code_size;
+}
+
 
 sub _reset__code_table {
   my $self = shift;
@@ -89,12 +99,23 @@ sub _reset__code_table {
   $self->_buf_write( 256 );
 }
 
+
 sub _inc__next_code {
   my $self = shift;
   $self->_next_code( $self->_next_code + 1 );
 }
 
-sub _add_code {
+
+sub _new_code {
+  my $self = shift;
+  my ( $data ) = @_;
+  
+  $self->_code_table->{ $data } = $self->_next_code;
+  $self->_inc__next_code;
+}
+
+
+sub _buf_append_code {
   my $self = shift;
   my ( $code ) = @_;
 
@@ -102,11 +123,11 @@ sub _add_code {
   if ( $code > $max_code ){
     
     if ( $self->_code_size < $self->max_code_size ){
-      $self->_set_code_size($self->_code_size + 1 );
+      $self->_code_size($self->_code_size + 1 );
     }
     else {
       # FINISHME
-      # if compress(1) compatible we need to do a code table reset
+      # if compress(1) comparable we need to do a code table reset
       # ... when the ratio falls after reaching this point.
       # this doesn't need to be perfect, the only part that needs
       # match algorithm-wise is what code tables are built the same
@@ -119,11 +140,13 @@ sub _add_code {
   $self->_buf_write( $code );
 }
 
+
 sub _finish {
   my $self = shift;
 
   return ${ $self->_buf };
 }
+
 
 sub _buf_write {
   my $self = shift;
@@ -169,15 +192,14 @@ sub compress {
       $seen .= $char;
     }
     else {
-      $self->_add_code( $codes->{ $seen } );
+      $self->_buf_append_code( $codes->{ $seen } );
       
-      $codes->{ $seen . $char } = $self->_next_code;
-      $self->_inc__next_code;
+      $self->_new_code( $seen . $char );
       
       $seen = $char;
     }
   }
-  $self->_add_code( $codes->{ $seen } );  #last bit of input
+  $self->_buf_append_code( $codes->{ $seen } );  #last bit of input
   
   return $self->_finish;
 }

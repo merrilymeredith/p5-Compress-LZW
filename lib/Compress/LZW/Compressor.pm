@@ -1,9 +1,25 @@
 package Compress::LZW::Compressor;
+# ABSTRACT: Scaling LZW compressor class
+
+=head1 SYNOPSIS
+
+ use Compress::LZW::Compressor;
+  
+ my $c = Compress::LZW::Compressor->new();
+ my $compressed = $c->compress($some_data);
+  
+=cut
+
 
 use Compress::LZW qw(:const);
 
 use Moo;
 use namespace::clean;
+
+has block_mode => (
+  is      => 'ro',
+  default => 1,
+);
 
 has lsb_first => (
   is      => 'ro',
@@ -24,12 +40,23 @@ has _code_size => ( # current bits
   is       => 'rw',
   clearer  => 1,
   lazy     => 1,
-  builder  => 1,
+  builder  => sub {
+    $_[0]->init_code_size;
+  },
 );
 
 has _buf => (
   is      => 'lazy',
-  builder => 1,
+  clearer => 1,
+  builder => sub {
+    my $self = shift;
+    
+    my $buf = $MAGIC
+      . chr( $self->max_code_size | ( $self->block_mode ? $BLOCK_MASK : 0 ) );
+       
+    $self->_buf_size( length($buf) * 8 );
+    return \$buf;
+  },
 );
 
 has _buf_size => ( #track our endpoint in bits
@@ -37,48 +64,42 @@ has _buf_size => ( #track our endpoint in bits
 );
 
 has _code_table => (
-  is      => 'lazy',
+  is      => 'ro',
+  lazy    => 1,
   clearer => 1,
+  builder => sub {
+    return {
+      map { chr($_) => $_ } 0 .. 255
+    };
+  },
 );
 
 has _next_code => (
   is      => 'rw',
+  lazy    => 1,
   clearer => 1,
-  default => 257,
+  builder => sub {
+    $_[0]->block_mode ? 257 : 256;
+  },
 );
 
 
-sub _build__buf {
+
+sub _reset_code_table {
   my $self = shift;
   
-  my $buf = $MAGIC
-    . chr( $self->max_code_size | $BLOCK_MASK );
-     
-  $self->_buf_size( length($buf) * 8 );
-  return \$buf;
+  $self->_clear_code_table;
+  $self->_clear_next_code;
+  $self->_clear_code_size;
 }
 
-
-sub _build__code_table {
-  return {
-    map { chr($_) => $_ } 0 .. 255
-  };
-}
-
-sub _build__code_size {
-  return $_[0]->init_code_size;
-}
-
-
-sub _reset__code_table {
+sub reset {
   my $self = shift;
   
-  $self->_clear__code_table;
-  $self->_clear__next_code;
-  $self->_clear__code_size;
-  $self->_buf_write( $RESET_CODE );
+  $self->_reset_code_table;
+  $self->_clear_buf;
+  $self->_buf_size( 0 );
 }
-
 
 sub _new_code {
   my $self = shift;
@@ -94,7 +115,7 @@ sub _new_code {
     if ( $self->_code_size < $self->max_code_size ){
       $self->_code_size($self->_code_size + 1 );
     }
-    else {
+    elsif ( $self->block_mode ){
       # FINISHME
       # if compress(1) comparable we need to do a code table reset
       # ... when the ratio falls after reaching this point.
@@ -102,18 +123,11 @@ sub _new_code {
       # match algorithm-wise is what code tables are built the same
       # after a reset.
       warn "Resetting code table at $code";
-      $self->_reset__code_table;
+      $self->_reset_code_table;
+      $self->_buf_write( $RESET_CODE );
     }
   }
 }
-
-
-sub _finish {
-  my $self = shift;
-
-  return ${ $self->_buf };
-}
-
 
 sub _buf_write {
   my $self = shift;
@@ -152,6 +166,8 @@ sub compress {
   my $self = shift;
   my ( $str ) = @_;
   
+  $self->reset;
+  
   my $codes = $self->_code_table;
 
   my $seen = '';
@@ -171,7 +187,7 @@ sub compress {
   }
   $self->_buf_write( $codes->{ $seen } );  #last bit of input
   
-  return $self->_finish;
+  return ${ $self->_buf };
 }
 
 1;

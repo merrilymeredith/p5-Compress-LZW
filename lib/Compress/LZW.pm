@@ -7,7 +7,7 @@ use base 'Exporter';
 our @EXPORT = qw/compress decompress/;;
 
 our $MAGIC      = "\037\235";
-our $BIT_MASK   = 0x1f;
+our $BITS_MASK  = 0x1f;
 our $BLOCK_MASK = 0X80;
 
 sub compress {
@@ -19,8 +19,16 @@ sub compress {
 sub decompress {
   my ( $str ) = @_;
   
-  return Compress::LZW::Compressor->new()->compress( $str );
+  return Compress::LZW::Decompressor->new()->decompress( $str );
 }  
+
+
+sub _detect_lsb_first {
+  use Config;
+  
+  return 1 if substr($Config{byteorder},0,4) eq '1234';
+  return 0;
+}
 
 ############################################################
 
@@ -29,6 +37,11 @@ package Compress::LZW::Compressor;
 
 use Moo;
 use namespace::clean;
+
+has lsb_first => (
+  is      => 'ro',
+  default => \&Compress::LZW::_detect_lsb_first,
+);
 
 has max_code_size => ( # max bits
   is      => 'ro',
@@ -100,27 +113,16 @@ sub _reset__code_table {
 }
 
 
-sub _inc__next_code {
-  my $self = shift;
-  $self->_next_code( $self->_next_code + 1 );
-}
-
-
 sub _new_code {
   my $self = shift;
   my ( $data ) = @_;
   
-  $self->_code_table->{ $data } = $self->_next_code;
-  $self->_inc__next_code;
-}
-
-
-sub _buf_append_code {
-  my $self = shift;
-  my ( $code ) = @_;
-
+  my $code = $self->_next_code;
+  $self->_code_table->{ $data } = $code;
+  $self->_next_code( $code + 1 );
+  
   my $max_code = 2 ** $self->_code_size;
-  if ( $code > $max_code ){
+  if ( $self->_next_code > $max_code ){
     
     if ( $self->_code_size < $self->max_code_size ){
       $self->_code_size($self->_code_size + 1 );
@@ -136,8 +138,6 @@ sub _buf_append_code {
       $self->_reset__code_table;
     }
   }
-  
-  $self->_buf_write( $code );
 }
 
 
@@ -161,7 +161,7 @@ sub _buf_write {
   if ( $code > ( 2 ** $code_size ) ){
     die "Code value too high for current code size $code_size";
   }
-  my $wpos = $buf_size;# + $code_size - 1;
+  my $wpos = $self->lsb_first ? $buf_size : ( $buf_size + $code_size - 1 );
   
   #~ warn "write 0x" . hex( $code ) . "\tat $code_size bits\toffset $wpos (byte ".int($wpos/8) . ')';
   
@@ -170,7 +170,10 @@ sub _buf_write {
   }
   else {
     for my $bit ( 0 .. $code_size-1 ){
-      vec( $$buf, $wpos + $bit, 1 ) = 1 if ( ($code >> $bit) & 1 );
+      
+      if ( ($code >> $bit) & 1 ){
+        vec( $$buf, $wpos + ($self->lsb_first ? $bit : 0 - $bit ), 1 ) = 1;
+      }
     }
   }
   
@@ -192,16 +195,198 @@ sub compress {
       $seen .= $char;
     }
     else {
-      $self->_buf_append_code( $codes->{ $seen } );
+      $self->_buf_write( $codes->{ $seen } );
       
       $self->_new_code( $seen . $char );
       
       $seen = $char;
     }
   }
-  $self->_buf_append_code( $codes->{ $seen } );  #last bit of input
+  $self->_buf_write( $codes->{ $seen } );  #last bit of input
   
   return $self->_finish;
+}
+
+
+############################################################
+
+
+package Compress::LZW::Decompressor;
+
+use Moo;
+use namespace::clean;
+
+has lsb_first => (
+  is      => 'ro',
+  default => \&Compress::LZW::_detect_lsb_first,
+);
+
+has _block_mode => ( # can code table reset
+  is      => 'rw',
+  default => 1,
+);
+
+has _max_code_size => ( # max bits
+  is      => 'rw',
+  default => 16,
+);
+
+has init_code_size => (
+  is      => 'ro',
+  default => 9,
+);
+
+has _code_size => ( # current bits
+  is       => 'rw',
+  clearer  => 1,
+  lazy     => 1,
+  builder  => 1,
+);
+
+has _buf => (
+  is      => 'ro',
+  default => sub { \'' },
+);
+
+has _code_table => (
+  is      => 'lazy',
+  clearer => 1,
+);
+
+has _next_code => (
+  is      => 'rw',
+  clearer => 1,
+  builder => 1,
+);
+
+
+sub _build__code_table {
+  return {
+    map { $_ => chr($_) } 0 .. 255
+  };
+}
+
+sub _build__code_size {
+  return $_[0]->init_code_size;
+}
+
+
+sub _build__next_code {
+  return $_[0]->_block_mode ? 257 : 256;
+}
+
+sub _reset__code_table {
+  my $self = shift;
+  
+  $self->_clear__code_table;
+  $self->_clear__next_code;
+  $self->_clear__code_size;
+}
+
+sub _inc__next_code {
+  my $self = shift;
+  
+  $self->_next_code( $self->_next_code + 1 );
+}
+
+sub _new_code {
+  my $self = shift;
+  my ( $data ) = @_;
+  
+  $self->_code_table->{ $self->_next_code } = $data;
+  $self->_inc__next_code;
+}
+
+
+sub _read_codes {
+  my $self = shift;
+  my ( $data ) = @_;
+  
+  #check header,
+  #return : first code @9 bits,
+  #       : iterator
+  
+  my $head = substr( $data, 0, 2 );
+  if ( $head ne $Compress::LZW::MAGIC ){
+    die "Magic bytes not found or corrupt.";
+  }
+  
+  my $bits = ord(substr( $data, 2, 1 ));
+  $self->_max_code_size( $bits & $Compress::LZW::BITS_MASK );
+  $self->_block_mode(  ( $bits & $Compress::LZW::BLOCK_MASK ) >> 7 );
+  
+  my $rpos = 8 * 3;  #reader position in bits;
+  my $eof = length( $data ) * 8;
+  
+  my $code_reader = sub {
+    my $self = shift;
+    
+    my $code_size = $self->_code_size;
+    
+    return undef if ( $rpos + $code_size ) > $eof;
+    
+    my $cpos = $self->lsb_first ? $rpos : ($rpos + $code_size);
+    
+    my $code = 0;
+    for ( 0 .. $code_size - 1 ){
+      $code |=
+        vec( $data, $cpos + ( $self->lsb_first ? $_ : 0 - $_ ), 1) << $_;
+    }
+    
+    $rpos += $code_size;
+    
+    return $code;
+  };
+
+  return ( $code_reader->( $self ), $code_reader );
+}
+
+sub decompress {
+  my $self = shift;
+  my ( $data ) = @_;
+  
+  my $codes = $self->_code_table;
+
+  my ( $init_code, $code_reader ) = $self->_read_codes( $data);
+  
+  my $str = $codes->{ $init_code };
+  
+  my $seen = $init_code;
+  
+  while ( defined( my $code = $code_reader->($self) ) ){
+    
+    if ( $code == 256 ){
+      die "got a reset";
+    }    
+    
+    if ( my $word = $codes->{ $code } ){
+      
+      $str .= $word;
+      
+      $self->_new_code( $codes->{ $seen } . substr($word,0,1) );
+    }
+    else {
+      my $word = $codes->{$seen};
+
+      unless ( $code == $self->_next_code ){
+        warn "($code != ". $self->_next_code . ") input may be corrupt";
+      }
+      $self->_inc__next_code;
+      
+      $codes->{$code} = $word . substr( $word, 0, 1 );
+      
+      $str .= $codes->{$code};
+    }
+    $seen = $code;
+    
+    
+    if ( $self->_next_code == (2 ** $self->_code_size) ){
+      $self->{_code_size}++;
+    }
+    
+    
+  }
+  return $str;
 }
 
 

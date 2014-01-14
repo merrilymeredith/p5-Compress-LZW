@@ -12,11 +12,8 @@ my $testdata = "# This is a comment intended to take up space.  It turns out tha
 ok( my $compdata = compress($testdata), "Compressed test data" );
 cmp_ok( length($compdata), '<', length($testdata), "Data compresses smaller" );
 
-TODO: {
-  local $TODO = 'NYI';
-  my $decompdata = '';#decompress($compdata);
-  cmp_ok( length($decompdata), '==', length($testdata), "Data decompresses to same size" );
-  is( $decompdata, $testdata, "Decompressed data is unchanged" );
-}
+my $decompdata = decompress($compdata);
+cmp_ok( length($decompdata), '==', length($testdata), "Data decompresses to same size" );
+is( $decompdata, $testdata, "Decompressed data is unchanged" );
 
 done_testing();

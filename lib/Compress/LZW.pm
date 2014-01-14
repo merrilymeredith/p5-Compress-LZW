@@ -22,11 +22,19 @@ use warnings;
 use strict;
 
 use base 'Exporter';
-our @EXPORT = qw/compress decompress/;;
+
+BEGIN {
+  our @EXPORT      = qw/compress decompress/;
+  our @EXPORT_OK   = qw( $MAGIC $BITS_MASK $BLOCK_MASK $RESET_CODE );
+  our %EXPORT_TAGS = (
+    const => \@EXPORT_OK,
+  );
+}
 
 our $MAGIC      = "\037\235";
 our $BITS_MASK  = 0x1f;
 our $BLOCK_MASK = 0X80;
+our $RESET_CODE = 256;
 
 =func compress
 
@@ -87,6 +95,8 @@ which was posted online.
 
 package Compress::LZW::Compressor;
 
+use Compress::LZW qw(:const);
+
 use Moo;
 use namespace::clean;
 
@@ -136,8 +146,8 @@ has _next_code => (
 sub _build__buf {
   my $self = shift;
   
-  my $buf = $Compress::LZW::MAGIC
-    . chr( $self->max_code_size | $Compress::LZW::BLOCK_MASK );
+  my $buf = $MAGIC
+    . chr( $self->max_code_size | $BLOCK_MASK );
      
   $self->_buf_size( length($buf) * 8 );
   return \$buf;
@@ -161,7 +171,7 @@ sub _reset__code_table {
   $self->_clear__code_table;
   $self->_clear__next_code;
   $self->_clear__code_size;
-  $self->_buf_write( 256 );
+  $self->_buf_write( $RESET_CODE );
 }
 
 
@@ -265,6 +275,8 @@ sub compress {
 
 package Compress::LZW::Decompressor;
 
+use Compress::LZW qw(:const);
+
 use Moo;
 use namespace::clean;
 
@@ -359,13 +371,13 @@ sub _read_codes {
   #       : iterator
   
   my $head = substr( $data, 0, 2 );
-  if ( $head ne $Compress::LZW::MAGIC ){
+  if ( $head ne $MAGIC ){
     die "Magic bytes not found or corrupt.";
   }
   
   my $bits = ord(substr( $data, 2, 1 ));
-  $self->_max_code_size( $bits & $Compress::LZW::BITS_MASK );
-  $self->_block_mode(  ( $bits & $Compress::LZW::BLOCK_MASK ) >> 7 );
+  $self->_max_code_size( $bits & $BITS_MASK );
+  $self->_block_mode(  ( $bits & $BLOCK_MASK ) >> 7 );
   
   my $rpos = 8 * 3;  #reader position in bits;
   my $eof = length( $data ) * 8;
@@ -403,21 +415,23 @@ sub decompress {
   
   my $str = $codes->{ $init_code };
   
-  my $seen = $init_code;
-  
+  my $seen = $init_code;  
   while ( defined( my $code = $code_reader->($self) ) ){
-    
-    if ( $code == 256 ){
-      die "got a reset";
-    }    
+    if ( $self->_block_mode and $code == $RESET_CODE ){
+      #reset table, next code, and code size
+      $self->_reset__code_table;
+      
+      # trigger the builder
+      $codes = $self->_code_table;
+    }
     
     if ( my $word = $codes->{ $code } ){
       
       $str .= $word;
-      
       $self->_new_code( $codes->{ $seen } . substr($word,0,1) );
     }
     else {
+      
       my $word = $codes->{$seen};
 
       unless ( $code == $self->_next_code ){
@@ -431,11 +445,10 @@ sub decompress {
     }
     $seen = $code;
     
-    
+    # if next code expected will require a larger bit size
     if ( $self->_next_code == (2 ** $self->_code_size) ){
       $self->{_code_size}++;
     }
-    
     
   }
   return $str;

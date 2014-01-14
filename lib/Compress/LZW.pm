@@ -1,4 +1,22 @@
 package Compress::LZW;
+# ABSTRACT: Pure-Perl implementation of scaling LZW
+
+=head1 SYNOPSIS
+
+ use Compress::LZW;
+  
+ my $compressed = compress($some_data);
+ my $data       = decompress($compressed);
+  
+=head1 DESCRIPTION
+
+C<Compress::LZW> is a perl implementation of the Lempel-Ziv-Welch
+compression algorithm, which should no longer be patented worldwide.
+It is shooting for loose compatibility with the flavor of LZW 
+found in the classic UNIX compress(1), though there are a few
+variations out there today.  I test against ncompress on Linux x86.
+
+=cut
 
 use warnings;
 use strict;
@@ -10,11 +28,28 @@ our $MAGIC      = "\037\235";
 our $BITS_MASK  = 0x1f;
 our $BLOCK_MASK = 0X80;
 
+=func compress
+
+Accepts a scalar, returns compressed data in a scalar.
+
+Wraps L<Compress::LZW::Compressor>
+
+=cut
+
 sub compress {
   my ( $str ) = @_;
   
   return Compress::LZW::Compressor->new()->compress( $str );
 }
+
+=func decompress
+
+Accepts a (compressed) scalar, returns decompressed data in a scalar.
+
+Wraps L<Compress::LZW::Deompressor>
+
+=cut
+
 
 sub decompress {
   my ( $str ) = @_;
@@ -29,6 +64,23 @@ sub _detect_lsb_first {
   return 1 if substr($Config{byteorder},0,4) eq '1234';
   return 0;
 }
+
+
+=head1 EXPORTS
+
+C<compress> C<decompress>
+
+=head1 SEE ALSO
+
+The implementations, L<Compress::LZW::Compressor> and L<Compress::LZW::Decompressor>.
+
+Other Compress::* modules, especially Compress::LZV1, Compress::LZF and Compress::Zlib.
+
+I definitely studied some other implementations that deserve credit, in particular: Sean O'Rourke, E<lt>SEANOE<gt> - Original author, C<Compress::SelfExtracting>, and another by Rocco Caputo
+which was posted online.
+
+=cut
+
 
 ############################################################
 
@@ -390,85 +442,4 @@ sub decompress {
 }
 
 
-
 1;
-__END__
-
-=head1 NAME
-
-Compress::LZW -- Pure perl implementation of LZW
-
-=head1 WARNING
-
-This module does not yet support compress(1)'s .Z files!! Nor is its
-interface stable.  Hence the alpha status.  Expect support to come soon.
-
-=head1 WARNING
-
-Read above once more :) 
-
-=head1 SYNOPSIS
-
-  use Compress::LZW;
-  
-  my $compressed = compress($fatdata);
-  my $fatdata    = decompress($compressed);
-  
-  my $smallcompressed = compress($thindata, 12);
-  my $thindata        = decompress($smallcompressed, 12);
-  
-=head1 DESCRIPTION
-
-C<Compress::LZW> it a perl implementation of the newly free LZW
-compression algorithm.  It defaults to building a 16-bit codeword
-table, but provides the ability to choose a 12-bit table also.
-Depending on the size of your data, the 12-bit table may provide
-better compression.
-
-=head2 Functions
-
-=over
-
-=item C<compress>
-
-Takes a string as its first argument, and returns the compressed
-result.  You can also specify the size of your codeword table in
-C<@_[1]>, choosing either 12 or 16.  16 is the default.  C<compress>
-will 
-
-=item C<decompress>
-
-Takes a string as its first argument, and returns the decompressed
-result.  You can also specify the size of your codeword table in
-@_[1], choosing either 12 or 16.  16 is the default.
-
-=back
-
-
-=head1 EXPORTS
-
-C<Compress::LZW> exports: C<compress> C<decompress>
-That's all.
-
-=head1 SEE ALSO
-
-Other Compress::* modules, especially Compress::LZV1, Compress::LZF and Compress::Zlib.
-
-=head1 AUTHOR
-
-Sean O'Rourke, E<lt>seano@cpan.orgE<gt> - Original author, C<Compress::SelfExtracting>
-
-Matt Howard E<lt>mhoward@hattmoward.orgE<gt> -  C<Compress::LZW>
-   
-Bug reports welcome, patches even more welcome.
-
-=head1 COPYRIGHT
-
-Copyright (C) 2003 Sean O'Rourke & Matt Howard.  All rights reserved, some wrongs
-reversed.  This module is distributed under the same terms as Perl
-itself.  Let me know if you actually find it useful.
-
-MH: Also, credit to Rocco Caputo for a 2nd implementation to study. 
-Thanks!
-
-=cut

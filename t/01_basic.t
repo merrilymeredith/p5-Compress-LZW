@@ -3,8 +3,7 @@
 use Test::More tests => 6;
 
 use Compress::LZW;
-use strict;
-use warnings;
+use strictures;
 
 my $testdata = "# This is a comment intended to take up space.  It turns out that\n# larger scripts may be handled differently!  blah blah blah blah blah\n# blah blah blah blah blah blah blah blah blah blah blah blah blah\n# blah blah blah blah blah blah blah blah blah blah blah blah blah\n# blah blah blah blah blah blah blah blah blah blah blah blah blah\n# blah blah\n";
 

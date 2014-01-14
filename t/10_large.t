@@ -3,8 +3,7 @@
 use Test::More tests => 4;
 
 use Compress::LZW;
-use strict;
-use warnings;
+use strictures;
 
 my $testsize = 1024 * 1024;
 

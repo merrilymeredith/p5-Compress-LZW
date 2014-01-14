@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use Test::More;
+use Test::More tests => 4;
 
 use Compress::LZW;
 use strict;
@@ -23,4 +23,3 @@ my $decompdata = decompress($compdata);
 cmp_ok( length($decompdata), '==', length($testdata), "Large data decompresses to same size" );
 is( $decompdata, $testdata, "Data is unchanged" );
 
-done_testing();

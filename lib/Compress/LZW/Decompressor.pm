@@ -5,8 +5,8 @@ package Compress::LZW::Decompressor;
 
  use Compress::LZW::Decompressor;
   
- my $d = Compress::LZW::Decompressor->new();
- my $orig = $d->decompress($some_data);
+ my $d    = Compress::LZW::Decompressor->new();
+ my $orig = $d->decompress( $lzw );
   
 =cut
 
@@ -15,10 +15,30 @@ use Compress::LZW qw(:const);
 use Moo;
 use namespace::clean;
 
+=attr lsb_first
+Default: Dectected through Config.pm / byteorder
+
+True if bit 0 is the least significant in this environment. Not well-tested,
+but intended to change some internal behavior to match compress(1) output on
+MSB-zero platforms.
+
+Needs to match the value used during compression.
+
+=cut
+
 has lsb_first => (
   is      => 'ro',
   default => \&Compress::LZW::_detect_lsb_first,
 );
+
+=attr init_code_size
+Default: 9
+
+After the first three header bytes, input codes are expected tobegin at this
+size. This is not stored in the resulting stream, so if this was altered from
+default at compression, you need to supply the same value here.
+
+=cut
 
 has init_code_size => (
   is      => 'ro',
@@ -71,19 +91,86 @@ has _next_code => (
 );
 
 
-sub _reset_code_table {
+=method decompress ( $input )
+
+Decompress $input with the current settings and returns the result.
+
+=cut
+
+sub decompress {
   my $self = shift;
+  my ( $data ) = @_;
+
+  $self->reset;
+
+  my $codes = $self->_code_table;
+
+  my $code_reader = $self->_begin_read( $data );
   
-  $self->_clear_code_table;
-  $self->_clear_next_code;
-  $self->_clear_code_size;
+  my $init_code = $code_reader->();
+  my $str = $codes->{ $init_code };
+  
+  my $seen = $init_code;
+  while ( defined( my $code = $code_reader->() ) ){
+    if ( $self->_block_mode and $code == $RESET_CODE ){
+      #reset table, next code, and code size
+      $self->_reset_code_table;
+      
+      # trigger the builder
+      $codes = $self->_code_table;
+    }
+    
+    if ( my $word = $codes->{ $code } ){
+      
+      $str .= $word;
+      $self->_new_code( $codes->{ $seen } . substr($word,0,1) );
+    }
+    else {
+      
+      my $word = $codes->{$seen};
+
+      unless ( $code == $self->_next_code ){
+        warn "($code != ". $self->_next_code . ") input may be corrupt";
+      }
+      $self->_inc_next_code;
+      
+      $codes->{$code} = $word . substr( $word, 0, 1 );
+      
+      $str .= $codes->{$code};
+    }
+    $seen = $code;
+    
+    # if next code expected will require a larger bit size
+    if ( $self->_next_code == (2 ** $self->_code_size) ){
+      $self->{_code_size}++;
+    }
+    
+  }
+  return $str;
 }
+
+=method reset ()
+
+Resets the decompressor state for another round of input. Automatically
+called at the beginning of ->decompress.
+
+Resets: code table, next code number, code size, output buffer
+
+=cut
 
 sub reset {
   my $self = shift;
   
   $self->_reset_code_table;
   $self->_clear_buf;
+}
+
+sub _reset_code_table {
+  my $self = shift;
+  
+  $self->_clear_code_table;
+  $self->_clear_next_code;
+  $self->_clear_code_size;
 }
 
 sub _inc_next_code {
@@ -144,58 +231,5 @@ sub _begin_read {
 
   return $code_reader;
 }
-
-sub decompress {
-  my $self = shift;
-  my ( $data ) = @_;
-
-  $self->reset;
-
-  my $codes = $self->_code_table;
-
-  my $code_reader = $self->_begin_read( $data );
-  
-  my $init_code = $code_reader->();
-  my $str = $codes->{ $init_code };
-  
-  my $seen = $init_code;
-  while ( defined( my $code = $code_reader->() ) ){
-    if ( $self->_block_mode and $code == $RESET_CODE ){
-      #reset table, next code, and code size
-      $self->_reset_code_table;
-      
-      # trigger the builder
-      $codes = $self->_code_table;
-    }
-    
-    if ( my $word = $codes->{ $code } ){
-      
-      $str .= $word;
-      $self->_new_code( $codes->{ $seen } . substr($word,0,1) );
-    }
-    else {
-      
-      my $word = $codes->{$seen};
-
-      unless ( $code == $self->_next_code ){
-        warn "($code != ". $self->_next_code . ") input may be corrupt";
-      }
-      $self->_inc_next_code;
-      
-      $codes->{$code} = $word . substr( $word, 0, 1 );
-      
-      $str .= $codes->{$code};
-    }
-    $seen = $code;
-    
-    # if next code expected will require a larger bit size
-    if ( $self->_next_code == (2 ** $self->_code_size) ){
-      $self->{_code_size}++;
-    }
-    
-  }
-  return $str;
-}
-
 
 1;

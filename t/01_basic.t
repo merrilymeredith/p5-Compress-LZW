@@ -5,8 +5,7 @@ use Test::More tests => 6;
 use Compress::LZW;
 use strictures;
 
-my $testdata = "# This is a comment intended to take up space.  It turns out that\n# larger scripts may be handled differently!  blah blah blah blah blah\n# blah blah blah blah blah blah blah blah blah blah blah blah blah\n# blah blah blah blah blah blah blah blah blah blah blah blah blah\n# blah blah blah blah blah blah blah blah blah blah blah blah blah\n# blah blah\n";
-
+my $testdata = "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ";
 
 ok(
   my $compdata = compress($testdata),

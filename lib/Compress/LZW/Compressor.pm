@@ -17,6 +17,7 @@ use Moo;
 use namespace::clean;
 
 =attr block_mode
+
 Default: 1
 
 Block mode is a feature added to LZW by compress(1). Once the maximum
@@ -32,6 +33,7 @@ has block_mode => (
 );
 
 =attr lsb_first
+
 Default: Dectected through Config.pm / byteorder
 
 True if bit 0 is the least significant in this environment. Not well-tested,
@@ -46,6 +48,7 @@ has lsb_first => (
 );
 
 =attr max_code_size
+
 Default: 16
 
 Maximum size in bits that code output may scale up to.  This value is stored
@@ -60,6 +63,7 @@ has max_code_size => ( # max bits
 );
 
 =attr init_code_size
+
 Default: 9
 
 After the first three header bytes, all output codes begin at this size. This

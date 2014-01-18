@@ -16,6 +16,7 @@ use Moo;
 use namespace::clean;
 
 =attr lsb_first
+
 Default: Dectected through Config.pm / byteorder
 
 True if bit 0 is the least significant in this environment. Not well-tested,
@@ -32,6 +33,7 @@ has lsb_first => (
 );
 
 =attr init_code_size
+
 Default: 9
 
 After the first three header bytes, input codes are expected tobegin at this

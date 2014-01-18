@@ -32,7 +32,7 @@ BEGIN {
 
 our $MAGIC      = "\037\235";
 our $BITS_MASK  = 0x1f;
-our $BLOCK_MASK = 0X80;
+our $BLOCK_MASK = 0x80;
 our $RESET_CODE = 256;
 
 use Compress::LZW::Compressor;

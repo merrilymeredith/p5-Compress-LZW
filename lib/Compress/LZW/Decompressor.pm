@@ -120,6 +120,12 @@ sub decompress {
       
       # trigger the builder
       $codes = $self->_code_table;
+      
+      my $reinit_code = $code_reader->();
+         $str .= $codes->{ $reinit_code };
+         $seen = $reinit_code;
+      
+      next;
     }
     
     if ( my $word = $codes->{ $code } ){
@@ -144,7 +150,7 @@ sub decompress {
     
     # if next code expected will require a larger bit size
     if ( $self->_next_code == (2 ** $self->_code_size) ){
-      $self->{_code_size}++;
+      $self->{_code_size}++ if $self->_code_size < $self->_max_code_size;
     }
     
   }
@@ -206,7 +212,7 @@ sub _begin_read {
   my $bits = ord(substr( $data, 2, 1 ));
   $self->_max_code_size( $bits & $BITS_MASK );
   $self->_block_mode(  ( $bits & $BLOCK_MASK ) >> 7 );
-  
+
   my $rpos = 8 * 3;  #reader position in bits;
   my $eof = length( $data ) * 8;
   
@@ -216,12 +222,12 @@ sub _begin_read {
     
     return undef if ( $rpos > $eof );
     
-    my $cpos = $self->lsb_first ? $rpos : ($rpos + $code_size);
+    my $cpos = $self->lsb_first ? $rpos : ($rpos + $code_size - 1);
     
     my $code = 0;
     for ( 0 .. $code_size - 1 ){
       $code |=
-        vec( $data, $cpos + ( $self->lsb_first ? $_ : 0 - $_ ), 1) << $_;
+        vec( $data, $cpos + ( $self->lsb_first ? $_ : (0 - $_) ), 1) << $_;
     }
     
     $rpos += $code_size;

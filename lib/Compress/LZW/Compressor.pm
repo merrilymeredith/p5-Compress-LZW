@@ -137,24 +137,22 @@ sub compress {
   
   $self->reset;
   
-  my $codes = $self->_code_table;
-
   my $seen = '';
   for ( 0 .. length($str) ){
     my $char = substr($str, $_, 1);
     
-    if ( exists $codes->{ $seen . $char } ){
+    if ( exists $self->_code_table->{ $seen . $char } ){
       $seen .= $char;
     }
     else {
-      $self->_buf_write( $codes->{ $seen } );
+      $self->_buf_write( $self->_code_table->{ $seen } );
       
       $self->_new_code( $seen . $char );
       
       $seen = $char;
     }
   }
-  $self->_buf_write( $codes->{ $seen } );  #last bit of input
+  $self->_buf_write( $self->_code_table->{ $seen } );  #last bit of input
   
   return ${ $self->_buf };
 }
@@ -189,16 +187,14 @@ sub _reset_code_table {
 sub _new_code {
   my $self = shift;
   my ( $data ) = @_;
-  
+
   my $code = $self->_next_code;
-  $self->_code_table->{ $data } = $code;
-  $self->_next_code( $code + 1 );
   
-  my $max_code = 2 ** $self->_code_size;
-  if ( $self->_next_code > $max_code ){
-    
+  if ( $code == (2 ** $self->_code_size) ){
     if ( $self->_code_size < $self->max_code_size ){
+      
       $self->_code_size($self->_code_size + 1 );
+      
     }
     elsif ( $self->block_mode ){
       # FINISHME
@@ -207,11 +203,19 @@ sub _new_code {
       # this doesn't need to be perfect, the only part that needs
       # match algorithm-wise is what code tables are built the same
       # after a reset.
-      warn "Resetting code table at $code";
+      #~ warn "Resetting code table at $code";
       $self->_reset_code_table;
       $self->_buf_write( $RESET_CODE );
     }
   }
+  
+  if ( $code >= (2 ** $self->_code_size) ){
+    return; # must not have been able to increase bits, we're capped
+  }
+
+  $self->_code_table->{ $data } = $code;
+  $self->_next_code( $code + 1 );
+  
 }
 
 sub _buf_write {
@@ -225,11 +229,11 @@ sub _buf_write {
   my $buf_size  = $self->_buf_size;
 
   if ( $code > ( 2 ** $code_size ) ){
-    die "Code value too high for current code size $code_size";
+    die "Code value $code too high for current code size $code_size";
   }
   my $wpos = $self->lsb_first ? $buf_size : ( $buf_size + $code_size - 1 );
   
-  #~ warn "write 0x" . hex( $code ) . "\tat $code_size bits\toffset $wpos (byte ".int($wpos/8) . ')';
+   #~ warn "write $code \tat $code_size bits\toffset $wpos (byte ".int($wpos/8) . ')';
   
   if ( $code == 1 ){
     vec( $$buf, $wpos, 1 ) = 1;

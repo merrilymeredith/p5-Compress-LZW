@@ -122,5 +122,33 @@ subtest '12- up to 16-bit compression' => sub {
   );
 };
 
+subtest '24-bit compression' => sub {
+  plan tests => 4;
+
+  my $c = new_ok(
+    'Compress::LZW::Compressor',
+    [ max_code_size => 24 ],
+    '24-bit compressor'
+  );
+  
+  my $repeat = 15_000;
+  note( 'Test data size: ' . length($testdata)*$repeat );
+  
+  ok(
+    my $compdata = $c->compress($testdata x $repeat),
+    "Compressed test data"
+  );warn 'bits: '.$c->_code_size;
+  cmp_ok(
+    length($compdata), '<', length($testdata)*$repeat,
+    "Data compresses smaller"
+  );
+ 
+  cmp_ok(
+    $d->decompress($compdata), 'eq', $testdata x $repeat,
+    'Data decompresses unchanged'
+  );
+  
+};
+
 
 done_testing();

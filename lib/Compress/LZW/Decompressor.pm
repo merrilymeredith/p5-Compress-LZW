@@ -12,6 +12,8 @@ package Compress::LZW::Decompressor;
 
 use Compress::LZW qw(:const);
 
+use Types::Standard qw( Bool Int );
+
 use Moo;
 use namespace::clean;
 
@@ -30,6 +32,7 @@ Needs to match the value used during compression.
 has lsb_first => (
   is      => 'ro',
   default => \&Compress::LZW::_detect_lsb_first,
+  isa     => Bool,
 );
 
 =attr init_code_size
@@ -45,6 +48,11 @@ default at compression, you need to supply the same value here.
 has init_code_size => (
   is      => 'ro',
   default => 9,
+  isa     => Type::Tiny->new(
+    parent => Int,
+    constraint => sub { $_ >= 9 and $_ < $BITS_MASK },
+    message    => sub { "$_ isn't between 9 and $BITS_MASK" },
+  ),
 );
 
 has _block_mode => ( # can code table reset

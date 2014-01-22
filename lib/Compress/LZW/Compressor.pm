@@ -13,6 +13,8 @@ package Compress::LZW::Compressor;
 
 use Compress::LZW qw(:const);
 
+use Types::Standard qw( Bool Int );
+
 use Moo;
 use namespace::clean;
 
@@ -30,6 +32,7 @@ is embedded in the output stream.
 has block_mode => (
   is      => 'ro',
   default => 1,
+  isa     => Bool,
 );
 
 =attr lsb_first
@@ -45,6 +48,7 @@ MSB-zero platforms.
 has lsb_first => (
   is      => 'ro',
   default => \&Compress::LZW::_detect_lsb_first,
+  isa     => Bool,
 );
 
 =attr max_code_size
@@ -60,6 +64,11 @@ same size automatically.
 has max_code_size => ( # max bits
   is      => 'ro',
   default => 16,
+  isa     => Type::Tiny->new(
+    parent     => Int,
+    constraint => sub { $_ >= 9 and $_ < $BITS_MASK },
+    message    => sub { "$_ isn't between 9 and $BITS_MASK" },
+  ),
 );
 
 =attr init_code_size
@@ -76,6 +85,11 @@ with compress(1).
 has init_code_size => (
   is      => 'ro',
   default => 9,
+  isa     => Type::Tiny->new(
+    parent     => Int,
+    constraint => sub { $_ >= 9 and $_ <= $BITS_MASK },
+    message    => sub { "$_ isn't between 9 and $BITS_MASK" },
+  ),
 );
 
 has _code_size => ( # current bits

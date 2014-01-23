@@ -25,7 +25,8 @@ True if bit 0 is the least significant in this environment. Not well-tested,
 but intended to change some internal behavior to match compress(1) output on
 MSB-zero platforms.
 
-Needs to match the value used during compression.
+Needs to match the value used during compression, if data is passing across
+CPU architectures.
 
 =cut
 
@@ -41,7 +42,11 @@ Default: 9
 
 After the first three header bytes, input codes are expected tobegin at this
 size. This is not stored in the resulting stream, so if this was altered from
-default at compression, you need to supply the same value here.
+default at compression, you I<must> supply the same value here.
+
+May be between 9 and 31, inclusive.  An exception will be raised in decompress
+if this value is already higher than the given stream's declared maximum code
+size.
 
 =cut
 
@@ -170,7 +175,8 @@ sub decompress {
 Resets the decompressor state for another round of input. Automatically
 called at the beginning of ->decompress.
 
-Resets: code table, next code number, code size, output buffer
+Resets the following internal state: code table, next code number, code
+size, output buffer
 
 =cut
 
@@ -220,6 +226,14 @@ sub _begin_read {
   my $bits = ord(substr( $data, 2, 1 ));
   $self->_max_code_size( $bits & $BITS_MASK );
   $self->_block_mode(  ( $bits & $BLOCK_MASK ) >> 7 );
+  
+  if ( $self->init_code_size > $self->_max_code_size ){
+    die
+      "Can't decompress stream with init_code_size " .
+      $self->init_code_size .
+      " > the stream's max_code_size ".
+      $self->_max_code_size;
+  }
 
   my $rpos = 8 * 3;  #reader position in bits;
   my $eof = length( $data ) * 8;

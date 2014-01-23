@@ -137,7 +137,9 @@ subtest '24-bit compression' => sub {
   ok(
     my $compdata = $c->compress($testdata x $repeat),
     "Compressed test data"
-  );warn 'bits: '.$c->_code_size;
+  );
+  note( 'Final bits: '.$c->_code_size );
+  
   cmp_ok(
     length($compdata), '<', length($testdata)*$repeat,
     "Data compresses smaller"

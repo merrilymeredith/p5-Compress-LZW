@@ -27,6 +27,8 @@ code size has been reached, if the compression ratio falls (NYI) the
 code table and code size can be reset, and a code indicating this reset
 is embedded in the output stream.
 
+May be 0 or 1.
+
 =cut
 
 has block_mode => (
@@ -37,11 +39,13 @@ has block_mode => (
 
 =attr lsb_first
 
-Default: Dectected through Config.pm / byteorder
+Default: Detected through Config.pm / byteorder
 
 True if bit 0 is the least significant in this environment. Not well-tested,
 but intended to change some internal behavior to match compress(1) output on
 MSB-zero platforms.
+
+May be 0 or 1.
 
 =cut
 
@@ -57,7 +61,12 @@ Default: 16
 
 Maximum size in bits that code output may scale up to.  This value is stored
 in byte 3 of the compressed output so the decompressor can also stop at the
-same size automatically.
+same size automatically.  Maximum code size implies a maximum code table size
+of C<2 ** max_code_size>, which can be emptied and restarted mid-stream in
+L</block_mode>.
+
+May be between 9 and 31, inclusive.  The default of 16 is the largest supported
+by compress(1), but Compress::LZW can handle up to 31 bits.
 
 =cut
 
@@ -77,8 +86,10 @@ Default: 9
 
 After the first three header bytes, all output codes begin at this size. This
 is not stored in the resulting stream, so if you alter this from default you
-need to supply the same value to the decompressor, and you lose compatibility
-with compress(1).
+I<must> supply the same value to the decompressor, and you lose compatibility
+with compress(1), which only allowed specifying L</max_code_size>.
+
+May be between 9 and L</max_code_size>, inclusive.
 
 =cut
 
@@ -175,9 +186,10 @@ sub compress {
 =method reset ()
 
 Resets the compressor state for another round of compression. Automatically
-called at the beginning of ->compress.
+called at the beginning of compress().
 
-Resets: Code table, next code number, code size, output buffer, buffer position
+Resets the following internal state: Code table, next code number, code size,
+output buffer, buffer position
 
 =cut
 

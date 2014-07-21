@@ -11,7 +11,7 @@ my $testdata = "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
 
 
 my $c = new_ok( 'Compress::LZW::Compressor', undef, 'compressor' );
-can_ok( $c, qw( compress reset lsb_first block_mode max_code_size init_code_size ) );
+can_ok( $c, qw( compress reset block_mode max_code_size ) );
 
 ok(
   my $compdata = $c->compress($testdata),
@@ -35,7 +35,7 @@ cmp_ok(
 
 
 my $d = new_ok( 'Compress::LZW::Decompressor', undef, 'decompressor' );
-can_ok( $d, qw( decompress lsb_first init_code_size ) );
+can_ok( $d, qw( decompress reset ) );
 
 ok(
   my $decompdata = $d->decompress($compdata),

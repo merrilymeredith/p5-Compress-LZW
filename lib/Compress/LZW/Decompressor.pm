@@ -17,74 +17,6 @@ use Types::Standard qw( Bool Int );
 use Moo;
 use namespace::clean;
 
-=attr lsb_first
-
-Default: Dectected through Config.pm / byteorder
-
-True if bit 0 is the least significant in this environment. Not well-tested,
-but intended to change some internal behavior to match compress(1) output on
-MSB-zero platforms.
-
-Needs to match the value used during compression, if data is passing across
-CPU architectures.
-
-=cut
-
-has lsb_first => (
-  is      => 'ro',
-  default => \&Compress::LZW::_detect_lsb_first,
-  isa     => Bool,
-);
-
-=attr init_code_size
-
-Default: 9
-
-After the first three header bytes, input codes are expected tobegin at this
-size. This is not stored in the resulting stream, so if this was altered from
-default at compression, you I<must> supply the same value here.
-
-May be between 9 and 31, inclusive.  An exception will be raised in decompress
-if this value is already higher than the given stream's declared maximum code
-size.
-
-=cut
-
-has init_code_size => (
-  is      => 'ro',
-  default => 9,
-  isa     => Type::Tiny->new(
-    parent => Int,
-    constraint => sub { $_ >= 9 and $_ < $BITS_MASK },
-    message    => sub { "$_ isn't between 9 and $BITS_MASK" },
-  ),
-);
-
-has _block_mode => ( # can code table reset
-  is      => 'rw',
-  default => 1,
-);
-
-has _max_code_size => ( # max bits
-  is      => 'rw',
-  default => 16,
-);
-
-has _code_size => ( # current bits
-  is       => 'rw',
-  clearer  => 1,
-  lazy     => 1,
-  builder  => sub {
-    $_[0]->init_code_size;
-  },
-);
-
-has _buf => (
-  is      => 'ro',
-  clearer => 1,
-  default => sub { \'' },
-);
-
 has _code_table => (
   is      => 'ro',
   lazy    => 1,
@@ -95,16 +27,6 @@ has _code_table => (
     }
   },
 );
-
-has _next_code => (
-  is      => 'rw',
-  lazy    => 1,
-  clearer => 1,
-  builder => sub {
-    $_[0]->_block_mode ? 257 : 256;
-  },
-);
-
 
 =method decompress ( $input )
 
@@ -118,56 +40,62 @@ sub decompress {
 
   $self->reset;
 
-  my $codes = $self->_code_table;
+  $self->{data}     = \$data;
+  $self->{data_pos} = 0;
 
-  my $code_reader = $self->_begin_read( $data );
-  
-  my $init_code = $code_reader->();
-  my $str = $codes->{ $init_code };
-  
-  my $seen = $init_code;
-  while ( defined( my $code = $code_reader->() ) ){
-    if ( $self->_block_mode and $code == $RESET_CODE ){
+  $self->_read_magic;
+  $self->{data_pos} = 24;
+
+  $self->_str_reset;
+
+  my $next_increase = 2 ** $self->{code_size};
+
+  my $seen = $self->_read_code;
+  my $buf  = $self->{str_table}{$seen};
+
+  while ( defined( my $code = $self->_read_code ) ){
+
+    if ( $self->{block_mode} and $code == $RESET_CODE ){
       #reset table, next code, and code size
-      $self->_reset_code_table;
+      $self->_str_reset;
       
-      # trigger the builder
-      $codes = $self->_code_table;
-      
-      my $reinit_code = $code_reader->();
-         $str .= $codes->{ $reinit_code };
-         $seen = $reinit_code;
+      $seen = $self->_read_code;
       
       next;
     }
     
-    if ( my $word = $codes->{ $code } ){
+    if ( my $word = $self->{str_table}{ $code } ){
       
-      $str .= $word;
-      $self->_new_code( $codes->{ $seen } . substr($word,0,1) );
+      $buf .= $word;
+
+      $self->{str_table}{ $self->{next_code} } = $self->{str_table}{ $seen } . substr($word,0,1);
+
+    }
+    elsif ( $code == $self->{next_code} ){
+      
+      my $word = $self->{str_table}{$seen};
+           
+      $self->{str_table}{$code} = $word . substr( $word, 0, 1 );
+      
+      $buf .= $self->{str_table}{$code};
     }
     else {
-      
-      my $word = $codes->{$seen};
-
-      unless ( $code == $self->_next_code ){
-        warn "($code != ". $self->_next_code . ") input may be corrupt";
-      }
-      $self->_inc_next_code;
-      
-      $codes->{$code} = $word . substr( $word, 0, 1 );
-      
-      $str .= $codes->{$code};
+      die "($code != ". $self->{next_code} . ") input may be corrupt before bit $self->{data_pos}";
     }
+
     $seen = $code;
+    $self->{next_code} += 1;
     
     # if next code expected will require a larger bit size
-    if ( $self->_next_code == (2 ** $self->_code_size) ){
-      $self->{_code_size}++ if $self->_code_size < $self->_max_code_size;
+    if ( $self->{next_code} >= $next_increase ){
+      if ( $self->{code_size} < $self->{max_code_size} ){
+        $self->{code_size} += 1;
+        $next_increase     *= 2;
+      }
     }
     
   }
-  return $str;
+  return $buf;
 }
 
 =method reset ()
@@ -182,84 +110,57 @@ size, output buffer
 
 sub reset {
   my $self = shift;
-  
-  $self->_reset_code_table;
-  $self->_clear_buf;
+ 
+  $self->{data}        = undef;
+  $self->{data_pos}    = 0;
+
+  $self->_str_reset;
 }
 
-sub _reset_code_table {
+sub _str_reset {
   my $self = shift;
   
-  $self->_clear_code_table;
-  $self->_clear_next_code;
-  $self->_clear_code_size;
-}
-
-sub _inc_next_code {
-  my $self = shift;
-  
-  $self->_next_code( $self->_next_code + 1 );
-}
-
-sub _new_code {
-  my $self = shift;
-  my ( $data ) = @_;
-  
-  $self->_code_table->{ $self->_next_code } = $data;
-  $self->_inc_next_code;
-}
-
-
-sub _begin_read {
-  my $self = shift;
-  my ( $data ) = @_;
-  
-  #check header,
-  #return : first code @9 bits,
-  #       : iterator
-  
-  my $head = substr( $data, 0, 2 );
-  if ( $head ne $MAGIC ){
-    die "Magic bytes not found or corrupt.";
-  }
-  
-  my $bits = ord(substr( $data, 2, 1 ));
-  $self->_max_code_size( $bits & $BITS_MASK );
-  $self->_block_mode(  ( $bits & $BLOCK_MASK ) >> 7 );
-  
-  if ( $self->init_code_size > $self->_max_code_size ){
-    die
-      "Can't decompress stream with init_code_size " .
-      $self->init_code_size .
-      " > the stream's max_code_size ".
-      $self->_max_code_size;
-  }
-
-  my $rpos = 8 * 3;  #reader position in bits;
-  my $eof = length( $data ) * 8;
-  
-  my $code_reader = sub {
-    
-    my $code_size = $self->_code_size;
-    
-    return undef if ( $rpos > $eof );
-    
-    my $cpos = $self->lsb_first ? $rpos : ($rpos + $code_size - 1);
-    
-    my $code = 0;
-    for ( 0 .. $code_size - 1 ){
-      $code |=
-        vec( $data, $cpos + ( $self->lsb_first ? $_ : (0 - $_) ), 1) << $_;
-    }
-    
-    $rpos += $code_size;
-    
-    return undef if $code == 0 and $rpos > $eof;
-    return $code;
-    
+  $self->{str_table} = {
+    map { $_ => chr($_) } 0 .. 255
   };
+  
+  $self->{code_size} = $INIT_CODE_SIZE;
+  $self->{next_code} = $self->{block_mode} ? $BL_INIT_CODE : $NR_INIT_CODE;
+}
 
-  return $code_reader;
+sub _read_magic {
+  my $self = shift;
+  
+  my $magic = substr( ${ $self->{data} }, 0, 3 );
+
+  if ( length($magic) != 3 or substr($magic,0, 2) ne $MAGIC ){
+    die "Invalid compress(1) header";
+  }
+
+  my $bits = ord( substr( $magic, 2, 1 ) );
+
+  $self->{max_code_size} = $bits & $MASK_BITS;
+  $self->{block_mode}    = ( $bits & $MASK_BLOCK ) >> 7;
+}
+
+sub _read_code {
+  my $self = shift;
+
+  if ( ($self->{data_pos} + $self->{code_size}) - 1 > (length( ${$self->{data}} ) * 8) ){
+    # warn "bailing at $self->{data_pos} + $self->{code_size} > " . length( ${$self->{data}} ) *8;
+    return undef;
+  }
+  
+  my $code = 0;
+  for ( 0 .. ($self->{code_size} - 1) ){
+    $code |=
+      vec( ${$self->{data}}, $self->{data_pos} + $_ , 1) << $_;
+  }
+  
+  $self->{data_pos} += $self->{code_size};
+  
+  return $code;
+  
 }
 
 1;

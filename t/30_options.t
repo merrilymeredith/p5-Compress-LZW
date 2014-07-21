@@ -62,66 +62,6 @@ for my $bits ( 9, 12 ) {
   };
 }
 
-subtest 'lsb-switched compression' => sub {
-  plan tests => 5;
-
-  my $c = new_ok(
-    'Compress::LZW::Compressor',
-    [ lsb_first => !Compress::LZW::_detect_lsb_first() ],
-    'lsb-switch compressor'
-  );
-
-  ok(
-    my $compdata = $c->compress($testdata),
-    "Compressed test data"
-  );
-  cmp_ok(
-    length($compdata), '<', length($testdata),
-    "Data compresses smaller"
-  );
-
-  my $d = new_ok(
-    'Compress::LZW::Decompressor',
-    [ lsb_first => !Compress::LZW::_detect_lsb_first() ],
-    'lsb-switch decompressor'
-  );
-
-  cmp_ok(
-    $d->decompress($compdata), 'eq', $testdata,
-    'Data decompresses unchanged'
-  );
-};
-
-subtest '12- up to 16-bit compression' => sub {
-  plan tests => 5;
-
-  my $c = new_ok(
-    'Compress::LZW::Compressor',
-    [ init_code_size => 12 ],
-    '12-16-bit compressor'
-  );
-
-  ok(
-    my $compdata = $c->compress($testdata),
-    "Compressed test data"
-  );
-  cmp_ok(
-    length($compdata), '<', length($testdata),
-    "Data compresses smaller"
-  );
-
-  my $md = new_ok(
-    'Compress::LZW::Decompressor',
-    [ init_code_size => 12 ],
-    'matching decompressor'
-  );
-  
-  cmp_ok(
-    $md->decompress($compdata), 'eq', $testdata,
-    'Data decompresses unchanged'
-  );
-};
-
 subtest '24-bit compression' => sub {
   plan tests => 4;
 
@@ -138,7 +78,7 @@ subtest '24-bit compression' => sub {
     my $compdata = $c->compress($testdata x $repeat),
     "Compressed test data"
   );
-  note( 'Final bits: '.$c->_code_size );
+  note( 'Final bits: '.$c->{code_size} );
   
   cmp_ok(
     length($compdata), '<', length($testdata)*$repeat,

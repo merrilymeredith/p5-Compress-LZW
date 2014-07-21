@@ -15,17 +15,21 @@ use Compress::LZW qw(:const);
 
 use Types::Standard qw( Bool Int );
 
+use bytes;
+
 use Moo;
 use namespace::clean;
+
+my $CHECKPOINT_BITS = 10_000;
 
 =attr block_mode
 
 Default: 1
 
-Block mode is a feature added to LZW by compress(1). Once the maximum
-code size has been reached, if the compression ratio falls (NYI) the
-code table and code size can be reset, and a code indicating this reset
-is embedded in the output stream.
+Block mode is a feature added to LZW by compress(1). Once the maximum code size
+has been reached, if the compression ratio falls (NYI) the code table and code
+size can be reset, and a code indicating this reset is embedded in the output
+stream.
 
 May be 0 or 1.
 
@@ -37,32 +41,14 @@ has block_mode => (
   isa     => Bool,
 );
 
-=attr lsb_first
-
-Default: Detected through Config.pm / byteorder
-
-True if bit 0 is the least significant in this environment. Not well-tested,
-but intended to change some internal behavior to match compress(1) output on
-MSB-zero platforms.
-
-May be 0 or 1.
-
-=cut
-
-has lsb_first => (
-  is      => 'ro',
-  default => \&Compress::LZW::_detect_lsb_first,
-  isa     => Bool,
-);
-
 =attr max_code_size
 
 Default: 16
 
-Maximum size in bits that code output may scale up to.  This value is stored
-in byte 3 of the compressed output so the decompressor can also stop at the
-same size automatically.  Maximum code size implies a maximum code table size
-of C<2 ** max_code_size>, which can be emptied and restarted mid-stream in
+Maximum size in bits that code output may scale up to.  This value is stored in
+byte 3 of the compressed output so the decompressor can also stop at the same
+size automatically.  Maximum code size implies a maximum code table size of C<2
+** max_code_size>, which can be emptied and restarted mid-stream in
 L</block_mode>.
 
 May be between 9 and 31, inclusive.  The default of 16 is the largest supported
@@ -75,80 +61,11 @@ has max_code_size => ( # max bits
   default => 16,
   isa     => Type::Tiny->new(
     parent     => Int,
-    constraint => sub { $_ >= 9 and $_ < $BITS_MASK },
-    message    => sub { "$_ isn't between 9 and $BITS_MASK" },
+    constraint => sub { $_ >= $INIT_CODE_SIZE and $_ < $MASK_BITS },
+    message    => sub { "$_ isn't between $INIT_CODE_SIZE and $MASK_BITS" },
   ),
 );
 
-=attr init_code_size
-
-Default: 9
-
-After the first three header bytes, all output codes begin at this size. This
-is not stored in the resulting stream, so if you alter this from default you
-I<must> supply the same value to the decompressor, and you lose compatibility
-with compress(1), which only allowed specifying L</max_code_size>.
-
-May be between 9 and L</max_code_size>, inclusive.
-
-=cut
-
-has init_code_size => (
-  is      => 'ro',
-  default => 9,
-  isa     => Type::Tiny->new(
-    parent     => Int,
-    constraint => sub { $_ >= 9 and $_ <= $BITS_MASK },
-    message    => sub { "$_ isn't between 9 and $BITS_MASK" },
-  ),
-);
-
-has _code_size => ( # current bits
-  is       => 'rw',
-  clearer  => 1,
-  lazy     => 1,
-  builder  => sub {
-    $_[0]->init_code_size;
-  },
-);
-
-has _buf => (
-  is      => 'lazy',
-  clearer => 1,
-  builder => sub {
-    my $self = shift;
-    
-    my $buf = $MAGIC
-      . chr( $self->max_code_size | ( $self->block_mode ? $BLOCK_MASK : 0 ) );
-       
-    $self->_buf_size( length($buf) * 8 );
-    return \$buf;
-  },
-);
-
-has _buf_size => ( #track our endpoint in bits
-  is      => 'rw',
-);
-
-has _code_table => (
-  is      => 'ro',
-  lazy    => 1,
-  clearer => 1,
-  builder => sub {
-    return {
-      map { chr($_) => $_ } 0 .. 255
-    };
-  },
-);
-
-has _next_code => (
-  is      => 'rw',
-  lazy    => 1,
-  clearer => 1,
-  builder => sub {
-    $_[0]->block_mode ? 257 : 256;
-  },
-);
 
 =method compress ( $input )
 
@@ -162,24 +79,57 @@ sub compress {
   
   $self->reset;
   
+  my $bytes_in;
+  my ( $checkpoint, $last_ratio ) = ( 0, 0 );
+ 
   my $seen = '';
+
   for ( 0 .. length($str) ){
     my $char = substr($str, $_, 1);
+
+    $bytes_in += 1;
     
-    if ( exists $self->_code_table->{ $seen . $char } ){
+    if ( exists $self->{code_table}{ $seen . $char } ){
       $seen .= $char;
     }
-    else {
-      $self->_buf_write( $self->_code_table->{ $seen } );
+    else {      
+      $self->_buf_write( $self->{code_table}{ $seen } );
       
       $self->_new_code( $seen . $char );
       
       $seen = $char;
+
+      if ( $self->{at_max_code} and $self->block_mode ){
+        if ( ! defined $checkpoint ){
+          $checkpoint = $self->{buf_pos} + $CHECKPOINT_BITS;
+        }
+        elsif ( $bytes_in > $checkpoint ){
+          my $ratio   = $bytes_in / ( $self->{buf_pos} / 8 );
+          $last_ratio = 0 if !defined $last_ratio;
+
+          
+          if ( $ratio >= $last_ratio ){
+            $last_ratio = $ratio;
+            $checkpoint = $self->{buf_pos} + $CHECKPOINT_BITS;
+          }
+          elsif ( $ratio < $last_ratio ){
+            # warn "Resetting code table ( $ratio < $last_ratio :: $self->{buf_pos} )";
+            $self->_buf_write( $RESET_CODE );
+            $self->_code_reset;
+
+            undef $checkpoint;
+            undef $last_ratio;
+          }
+        }
+      }
+
     }
   }
-  $self->_buf_write( $self->_code_table->{ $seen } );  #last bit of input
+
+  $self->_buf_write( $self->{code_table}{ $seen } );  #last bit of input
+  # warn "final ratio: " . ($bytes_in / ($self->{buf_pos} / 8));
   
-  return ${ $self->_buf };
+  return $self->{buf};
 }
 
 
@@ -196,52 +146,50 @@ output buffer, buffer position
 sub reset {
   my $self = shift;
   
-  $self->_reset_code_table;
-  $self->_clear_buf;
-  $self->_buf_size( 0 );
+  # replace buf with empty buffer after magic bytes
+  $self->{buf}     = $MAGIC
+    . chr( $self->max_code_size | ( $self->block_mode ? $MASK_BLOCK : 0 ) );
+
+  $self->{buf_pos} = length($self->{buf}) * 8;
+  
+  $self->_code_reset;
 }
 
 
-sub _reset_code_table {
+sub _code_reset {
   my $self = shift;
   
-  $self->_clear_code_table;
-  $self->_clear_next_code;
-  $self->_clear_code_size;
+  $self->{code_table} = {
+    map { chr($_) => $_ } 0 .. 255
+  };
+
+  $self->{at_max_code}   = 0;
+  $self->{code_size}     = $INIT_CODE_SIZE;
+  $self->{next_code}     = $self->block_mode ? $BL_INIT_CODE : $NR_INIT_CODE;
+  $self->{next_increase} = 2 ** $self->{code_size};
+
 }
 
 sub _new_code {
   my $self = shift;
-  my ( $data ) = @_;
+  my ( $word ) = @_;
 
-  my $code = $self->_next_code;
-  
-  if ( $code == (2 ** $self->_code_size) ){
-    if ( $self->_code_size < $self->max_code_size ){
-      
-      $self->_code_size($self->_code_size + 1 );
-      
+  if ( $self->{next_code} >= $self->{next_increase} ){
+
+    if ( $self->{code_size} < $self->{max_code_size} ){
+      $self->{code_size}     += 1;
+      $self->{next_increase} *= 2;
     }
-    elsif ( $self->block_mode ){
-      # FINISHME
-      # if compress(1) comparable we need to do a code table reset
-      # ... when the ratio falls after reaching this point.
-      # this doesn't need to be perfect, the only part that needs
-      # match algorithm-wise is what code tables are built the same
-      # after a reset.
-      #~ warn "Resetting code table at $code";
-      $self->_reset_code_table;
-      $self->_buf_write( $RESET_CODE );
+    else {
+      $self->{at_max_code} = 1;
     }
   }
   
-  if ( $code >= (2 ** $self->_code_size) ){
-    return; # must not have been able to increase bits, we're capped
+  if ( $self->{at_max_code} == 0 ){
+    $self->{code_table}{ $word } = $self->{next_code};
+    $self->{next_code} += 1;
   }
 
-  $self->_code_table->{ $data } = $code;
-  $self->_next_code( $code + 1 );
-  
 }
 
 sub _buf_write {
@@ -250,30 +198,27 @@ sub _buf_write {
 
   return unless defined $code;
   
-  my $code_size = $self->_code_size;
-  my $buf       = $self->_buf;
-  my $buf_size  = $self->_buf_size;
-
-  if ( $code > ( 2 ** $code_size ) ){
-    die "Code value $code too high for current code size $code_size";
+  if ( $code > ( 2 ** $self->{code_size} ) ){
+    die "Code value $code too high for current code size $self->{code_size}";
   }
-  my $wpos = $self->lsb_first ? $buf_size : ( $buf_size + $code_size - 1 );
+
+  my $wpos = $self->{buf_pos};
   
-   #~ warn "write $code \tat $code_size bits\toffset $wpos (byte ".int($wpos/8) . ')';
+  #~ warn "write $code \tat $code_size bits\toffset $wpos (byte ".int($wpos/8) . ')';
   
   if ( $code == 1 ){
-    vec( $$buf, $wpos, 1 ) = 1;
+    vec( $self->{buf}, $wpos, 1 ) = 1;
   }
   else {
-    for my $bit ( 0 .. $code_size-1 ){
+    for my $bit ( 0 .. ($self->{code_size} - 1) ){
       
       if ( ($code >> $bit) & 1 ){
-        vec( $$buf, $wpos + ($self->lsb_first ? $bit : 0 - $bit ), 1 ) = 1;
+        vec( $self->{buf}, $wpos + $bit, 1 ) = 1;
       }
     }
   }
   
-  $self->_buf_size( $buf_size + $code_size );
+  $self->{buf_pos} += $self->{code_size};
 }
 
 1;

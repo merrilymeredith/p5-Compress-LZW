@@ -56,6 +56,7 @@ sub decompress {
   while ( defined( my $code = $self->_read_code ) ){
 
     if ( $self->{block_mode} and $code == $RESET_CODE ){
+      warn "reset table at $self->{data_pos}";
       #reset table, next code, and code size
       $self->_str_reset;
       
@@ -64,8 +65,8 @@ sub decompress {
       next;
     }
     
-    if ( my $word = $self->{str_table}{ $code } ){
-      
+    if ( defined ( my $word = $self->{str_table}{ $code } ) ){
+
       $buf .= $word;
 
       $self->{str_table}{ $self->{next_code} } = $self->{str_table}{ $seen } . substr($word,0,1);
@@ -78,20 +79,28 @@ sub decompress {
       $self->{str_table}{$code} = $word . substr( $word, 0, 1 );
       
       $buf .= $self->{str_table}{$code};
+
     }
     else {
       die "($code != ". $self->{next_code} . ") input may be corrupt before bit $self->{data_pos}";
     }
 
     $seen = $code;
-    $self->{next_code} += 1;
     
     # if next code expected will require a larger bit size
-    if ( $self->{next_code} >= $next_increase ){
+    if ( $self->{next_code} + 1 >= $next_increase ){
       if ( $self->{code_size} < $self->{max_code_size} ){
+        warn "decode up to $self->{code_size} bits at bit $self->{data_pos}";
         $self->{code_size} += 1;
         $next_increase     *= 2;
       }
+      else {
+        $self->{at_max_code} = 1;
+      }
+    }
+
+    if ( $self->{at_max_code} == 0 ){
+      $self->{next_code} += 1;
     }
     
   }
@@ -124,8 +133,9 @@ sub _str_reset {
     map { $_ => chr($_) } 0 .. 255
   };
   
-  $self->{code_size} = $INIT_CODE_SIZE;
-  $self->{next_code} = $self->{block_mode} ? $BL_INIT_CODE : $NR_INIT_CODE;
+  $self->{code_size}   = $INIT_CODE_SIZE;
+  $self->{next_code}   = $self->{block_mode} ? $BL_INIT_CODE : $NR_INIT_CODE;
+  $self->{at_max_code} = 0;
 }
 
 sub _read_magic {

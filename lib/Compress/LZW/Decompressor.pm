@@ -17,17 +17,6 @@ use Types::Standard qw( Bool Int );
 use Moo;
 use namespace::clean;
 
-has _code_table => (
-  is      => 'ro',
-  lazy    => 1,
-  clearer => 1,
-  builder => sub {
-    return {
-      map { $_ => chr($_) } 0 .. 255
-    }
-  },
-);
-
 =method decompress ( $input )
 
 Decompress $input with the current settings and returns the result.
@@ -56,10 +45,11 @@ sub decompress {
   while ( defined( my $code = $self->_read_code ) ){
 
     if ( $self->{block_mode} and $code == $RESET_CODE ){
-      warn "reset table at $self->{data_pos}";
+      # warn sprintf('reset table (%s, %s) at %s', $seen, $code, $self->{data_pos} - $self->{code_size});
       #reset table, next code, and code size
       $self->_str_reset;
-      
+      $next_increase = 2 ** $self->{code_size};
+
       $seen = $self->_read_code;
       
       next;
@@ -90,7 +80,7 @@ sub decompress {
     # if next code expected will require a larger bit size
     if ( $self->{next_code} + 1 >= $next_increase ){
       if ( $self->{code_size} < $self->{max_code_size} ){
-        warn "decode up to $self->{code_size} bits at bit $self->{data_pos}";
+        # warn "decode up to $self->{code_size} bits at bit $self->{data_pos}";
         $self->{code_size} += 1;
         $next_increase     *= 2;
       }

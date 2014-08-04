@@ -203,7 +203,9 @@ sub _buf_write {
   }
 
   my $wpos = $self->{buf_pos};
-  
+  # if ( $code == $RESET_CODE ){
+  #   warn "wrote a reset code ($RESET_CODE) at $wpos";
+  # }
   #~ warn "write $code \tat $code_size bits\toffset $wpos (byte ".int($wpos/8) . ')';
   
   if ( $code == 1 ){

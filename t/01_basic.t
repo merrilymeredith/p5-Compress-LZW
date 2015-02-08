@@ -30,6 +30,6 @@ cmp_ok(
 );
 
 cmp_ok(
-  $testdata, 'eq', decompress(compress($testdata)),
+  decompress(compress($testdata)), 'eq', $testdata,
   'one-shot test'
 );

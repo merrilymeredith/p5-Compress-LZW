@@ -51,6 +51,7 @@ sub decompress {
       $next_increase = 2 ** $self->{code_size};
 
       $seen = $self->_read_code;
+      $buf .= $self->{str_table}{$seen};
       
       next;
     }

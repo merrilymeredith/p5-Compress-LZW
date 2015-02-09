@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-use Test::More tests => 6;
+use Test::More tests => 7;
 
 use Compress::LZW;
 use strictures;
@@ -30,6 +30,12 @@ cmp_ok(
 );
 
 cmp_ok(
-  $testdata, 'eq', decompress(compress($testdata)),
+  decompress(compress($testdata)), 'eq', $testdata,
   'one-shot test'
+);
+
+$testdata = '12';
+cmp_ok(
+  decompress(compress($testdata)), 'eq', $testdata,
+  'one-shot test - very short'
 );

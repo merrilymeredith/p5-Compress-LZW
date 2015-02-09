@@ -51,6 +51,7 @@ sub decompress {
       $next_increase = 2 ** $self->{code_size};
 
       $seen = $self->_read_code;
+      $buf .= $self->{str_table}{$seen};
       
       next;
     }
@@ -146,7 +147,7 @@ sub _read_magic {
 sub _read_code {
   my $self = shift;
 
-  if ( ($self->{data_pos} + $self->{code_size}) - 1 > (length( ${$self->{data}} ) * 8) ){
+  if ( $self->{data_pos} > length( ${$self->{data}} ) * 8 ){
     # warn "bailing at $self->{data_pos} + $self->{code_size} > " . length( ${$self->{data}} ) *8;
     return undef;
   }
@@ -159,6 +160,7 @@ sub _read_code {
   
   $self->{data_pos} += $self->{code_size};
   
+  return undef if $code == 0 and $self->{data_pos} > length( ${$self->{data}} ) * 8;
   return $code;
   
 }

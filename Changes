@@ -1,5 +1,19 @@
 Changelog for Compress-LZW
 
+0.04 2015-02-10T00:27:05
+ - Fix readme catching pre-podweaver input, fix new error about adding
+   Changes twice (Meredith Howard)
+ - Add v0.03 Changes (Meredith Howard)
+ - Fix losing characters in block mode on reset (Alex Kapranoff)
+ - Fix decompression of the last (short) code (Alex Kapranoff)
+ - Expected is first in cmp_ok (Alex Kapranoff)
+ - Fix decompression in block mode (Meredith Howard)
+ - Fix being code-capped in decompress and the check for known code
+   (Meredith Howard)
+ - Bring closer in line with current state of rb-compress-lzw (Meredith
+   Howard)
+ - Kwalitee fixes (Meredith Howard)
+
 0.03 2014-01-23T00:28:05Z
  - Doc updates, add a sanity check, pile more junk on dzil (Meredith
    Howard)
